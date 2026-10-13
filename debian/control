@@ -4,8 +4,8 @@ Priority: optional
 Maintainer: Vitex Software <info@vitexsoftware.cz>
 Build-Depends: debhelper-compat (= 13), cmake, g++, pkgconf | pkg-config, libtvision-dev, libncurses-dev | libncursesw5-dev, libpq-dev, gettext
 Standards-Version: 4.6.2
-Homepage: https://github.com/VitexSoftware/ishtaria-admin
-Vcs-Git: https://github.com/VitexSoftware/ishtaria-admin.git
+Homepage: https://git.vitexsoftware.com/Ishtaria/ishtaria-admin
+Vcs-Git: https://git.vitexsoftware.com/Ishtaria/ishtaria-admin.git
 Rules-Requires-Root: no
 
 Package: ishtaria-admin
