@@ -294,6 +294,44 @@ std::string captureOutput(const std::string &program, const std::vector<std::str
     return out;
 }
 
+// The `ishtaria-worldgen --earth` arguments of the world terrain one of the datadisks
+// defines (its real planet), empty for a procedural world: `ishtaria-server
+// --print-world-terrain` prints the heightmap and water mask paths.
+std::vector<std::string> worldTerrainArgs(const std::vector<std::string> &datadisks) {
+    if (datadisks.empty()) {
+        return {};
+    }
+    std::string ids;
+    for (const auto &id : datadisks) {
+        ids += (ids.empty() ? "" : ",") + id;
+    }
+    int status = 0;
+    std::string output;
+    try {
+        output = captureOutput(serverProgram(), {"--print-world-terrain", ids}, status);
+    } catch (const OpError &) {
+        return {};
+    }
+    if (status != 0) {
+        return {};
+    }
+    std::string::size_type start = 0;
+    while (start <= output.size()) {
+        const auto end = output.find('\n', start);
+        const std::string line = output.substr(start, end == std::string::npos ? end : end - start);
+        const auto tab = line.find('\t');
+        if (tab != std::string::npos && tab > 0 && tab + 1 < line.size() &&
+            line.size() - tab > 5 && tab > 5) {
+            return {"--earth", line.substr(0, tab), "--water", line.substr(tab + 1)};
+        }
+        if (end == std::string::npos) {
+            break;
+        }
+        start = end + 1;
+    }
+    return {};
+}
+
 } // namespace
 
 std::vector<Datadisk> Ops::installedDatadisks() {
@@ -357,8 +395,15 @@ void Ops::generateMap(const std::string &name, unsigned long long seed, int face
         }
     }
     const char *override_path = std::getenv("ISHTARIA_WORLDGEN");
-    const std::string pgm = runGenerator(override_path != nullptr ? override_path : "ishtaria-worldgen",
-                                         {std::to_string(seed), std::to_string(faceSize)});
+    std::vector<std::string> generatorArgs = worldTerrainArgs(datadisks);
+    if (generatorArgs.empty()) {
+        generatorArgs = {std::to_string(seed), std::to_string(faceSize)};
+    } else {
+        // A datadisk defines the world's real planet: the seed does not shape it.
+        generatorArgs.push_back(std::to_string(faceSize));
+    }
+    const std::string pgm = runGenerator(
+        override_path != nullptr ? override_path : "ishtaria-worldgen", generatorArgs);
     // Validate the P5 header exactly as the server expects it before storing anything.
     std::size_t pos = 0;
     auto token = [&]() {
@@ -420,8 +465,18 @@ WorldStatus Ops::worldStatus(bool checkGenerator) {
     }
     try {
         const char *override_path = std::getenv("ISHTARIA_WORLDGEN");
+        std::vector<std::string> diskIds;
+        for (const auto &disk : status.disks) {
+            diskIds.push_back(disk.id);
+        }
+        std::vector<std::string> generatorArgs = worldTerrainArgs(diskIds);
+        if (generatorArgs.empty()) {
+            generatorArgs = {map[0][0], map[0][1]};
+        } else {
+            generatorArgs.push_back(map[0][1]);
+        }
         const std::string pgm = runGenerator(override_path != nullptr ? override_path : "ishtaria-worldgen",
-                                             {map[0][0], map[0][1]});
+                                             generatorArgs);
         const auto hash = db_.exec("SELECT encode(sha256(decode($1, 'hex')), 'hex')", {toHex(pgm)});
         status.generator = hash.at(0).at(0) == map[0][2] ? GeneratorState::Current : GeneratorState::Changed;
     } catch (const OpError &e) {
