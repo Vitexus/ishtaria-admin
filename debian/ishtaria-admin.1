@@ -7,11 +7,26 @@ ishtaria-admin \- text-mode administration of an Ishtaria world server
 .SH DESCRIPTION
 Turbo Vision interface for the server operator: save, load, rename, delete and
 export world maps; rename, ban and delete players; manage portals to linked
-worlds; schedule a server shutdown with a notice shown to players.
+worlds; start the server service; schedule a server shutdown with a notice
+shown to players. At start-up it reports the service state, the address the
+server listens on and the datadisks the world was generated with, and offers
+to generate a first world map or start a stopped service.
 .PP
 It talks directly to the PostgreSQL database of ishtaria-server. Run it as the
-service user: \fBsudo -u ishtaria ishtaria-admin\fR. Started as root without an explicit URL it switches to that user itself.
+service user: \fBsudo \-u ishtaria ishtaria\-admin\fR. Started as root without an
+explicit URL it switches to that user itself. Starting the unit needs root
+privileges or a polkit rule for the ishtaria user.
 .SH ENVIRONMENT
 .TP
 .B DATABASE_URL
 Connection string. Default: postgresql:///ishtaria?host=/var/run/postgresql
+.TP
+.B ISHTARIA_SERVER_CONFIG
+Server configuration to read the listen address from.
+Default: /etc/ishtaria/server.toml
+.TP
+.B ISHTARIA_SERVER
+Alternative ishtaria-server binary (datadisk helpers).
+.TP
+.B ISHTARIA_WORLDGEN
+Alternative ishtaria-worldgen binary (map generation).

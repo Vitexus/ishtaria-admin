@@ -139,17 +139,34 @@ struct Action {
     bool needsSelection = true;
 };
 
+// One line about the state of the ishtaria-server systemd unit.
+std::string serviceLine(const ServiceStatus &service) {
+    std::string text = _("Server service: ");
+    switch (service.state) {
+    case ServiceStatus::State::Running: text += _("running"); break;
+    case ServiceStatus::State::Stopped: text += _("stopped"); break;
+    case ServiceStatus::State::Failed: text += _("failed"); break;
+    case ServiceStatus::State::Unknown:
+        text += service.detail.empty() ? _("unknown")
+                                       : std::string(_("unknown (")) + service.detail + ")";
+        break;
+    }
+    return text;
+}
+
 // Modal dialog: header, list of rows and a row of action buttons.
 class ListDialog : public TDialog {
 public:
     ListDialog(const std::string &title, std::function<std::string()> header,
-               std::function<std::vector<std::string>()> rows, std::vector<Action> actions)
+               std::function<std::vector<std::string>()> rows, std::vector<Action> actions,
+               int headerLines = 2)
         : TDialog(TRect(0, 0, 78, 22), title.c_str()), TWindowInit(&TDialog::initFrame),
-          header_(std::move(header)), rows_(std::move(rows)), actions_(std::move(actions)) {
+          header_(std::move(header)), rows_(std::move(rows)), actions_(std::move(actions)),
+          headerLines_(headerLines) {
         options |= ofCentered;
-        auto *bar = new TScrollBar(TRect(75, 4, 76, 16));
+        auto *bar = new TScrollBar(TRect(75, 2 + headerLines_, 76, 16));
         insert(bar);
-        list_ = new RowList(TRect(2, 4, 75, 16), bar);
+        list_ = new RowList(TRect(2, 2 + headerLines_, 75, 16), bar);
         insert(list_);
         int index = 0;
         for (const auto &action : actions_) {
@@ -187,7 +204,7 @@ public:
             if (headerText_ != nullptr) {
                 destroy(headerText_);
             }
-            headerText_ = new TStaticText(TRect(2, 2, 76, 4), header_().c_str());
+            headerText_ = new TStaticText(TRect(2, 2, 76, 2 + headerLines_), header_().c_str());
             insert(headerText_);
             const auto rows = rows_();
             list_->setRows(rows);
@@ -203,6 +220,7 @@ private:
     std::function<std::string()> header_;
     std::function<std::vector<std::string>()> rows_;
     std::vector<Action> actions_;
+    int headerLines_;
 };
 
 } // namespace
@@ -225,6 +243,62 @@ public:
         default: return;
         }
         clearEvent(event);
+    }
+
+    // Shown once at start-up: the systemd service state, the port the server
+    // listens on, the datadisks the world was generated with, an offer to generate
+    // a first world when none exists yet and to start a stopped service.
+    void showStartupStatus() {
+        ServiceStatus service = ops_.serviceStatus();
+        std::string text = serviceLine(service);
+        try {
+            if (!ops_.worldInitialised()) {
+                messageBox((text + "\n" +
+                            _("The world is not initialised yet. Start the server once to create it."))
+                               .c_str(),
+                           mfInformation | mfOKButton);
+                return;
+            }
+            const Row map = ops_.activeMap();
+            if (map[0].empty()) {
+                if (confirm(text + "\n" + _("No world map is generated yet. Generate a new world now?"))) {
+                    const auto generated = generateMapFlow("world");
+                    if (generated && loadMapFlow(*generated)) {
+                        messageBox(_("The new world map is now active. Start (or restart) the server service to serve it."),
+                                   mfInformation | mfOKButton);
+                    }
+                }
+                return;
+            }
+            std::string worldText = "\n" + listenText();
+            worldText += "\n" + std::string(_("Active map: seed ")) + map[0] + ", " + map[1] + " px";
+            const WorldStatus status = ops_.worldStatus(false);
+            if (status.disks.empty()) {
+                worldText += "\n" + std::string(_("The world uses no datadisks."));
+            } else {
+                worldText += "\n" + std::string(_("Datadisks the world was generated with: "));
+                for (std::size_t i = 0; i < status.disks.size(); ++i) {
+                    if (i > 0) {
+                        worldText += ", ";
+                    }
+                    worldText += status.disks[i].id + " " + status.disks[i].worldVersion;
+                }
+            }
+            if (service.state == ServiceStatus::State::Stopped ||
+                service.state == ServiceStatus::State::Failed) {
+                if (confirm(text + worldText + "\n\n" +
+                            _("The server service is not running. Start it now?"))) {
+                    ops_.startService();
+                    service = ops_.serviceStatus();
+                    text = serviceLine(service);
+                }
+            }
+            text += worldText;
+        } catch (const std::exception &e) {
+            text += "\n";
+            text += e.what();
+        }
+        messageBox(text.c_str(), mfInformation | mfOKButton);
     }
 
     // Tells the operator at start-up when the data served to players can be refreshed.
@@ -272,6 +346,57 @@ private:
 
     void showDialog(ListDialog *dialog) { deskTop->execView(dialog); destroy(dialog); }
 
+    // "Listening on: <address>" from the server configuration; the reason when unknown.
+    std::string listenText() const {
+        try {
+            return std::string(_("Listening on: ")) + ops_.serverListen();
+        } catch (const std::exception &e) {
+            std::string detail = e.what();
+            const auto lineEnd = detail.find('\n');
+            detail.erase(lineEnd == std::string::npos ? detail.size() : lineEnd);
+            if (detail.size() > 48) {
+                detail.erase(48);
+            }
+            return std::string(_("Listening on: unknown (")) + detail + ")";
+        }
+    }
+
+    // Asks for the name, seed, face size and datadisks, generates the map into the
+    // library and returns its id (nullopt when the operator cancelled).
+    std::optional<long> generateMapFlow(const std::string &defaultName) {
+        auto name = ask(_("Generate map"), _("Name in the library:"), defaultName);
+        if (!name) return std::nullopt;
+        auto seed = ask(_("Generate map"), _("Seed (number):"), std::to_string(std::time(nullptr)));
+        if (!seed) return std::nullopt;
+        auto size = ask(_("Generate map"), _("Face size in pixels (16-1024):"), "256");
+        if (!size) return std::nullopt;
+        char *end = nullptr;
+        const unsigned long long seedValue = std::strtoull(seed->c_str(), &end, 10);
+        if (seed->empty() || *end != '\0' || seed->find('-') != std::string::npos) {
+            throw OpError(_("The seed must be a non-negative whole number."));
+        }
+        const auto chosen = pickDatadisks(ops_.installedDatadisks());
+        if (!chosen) return std::nullopt;
+        ops_.generateMap(*name, seedValue, std::atoi(size->c_str()), *chosen);
+        const auto maps = ops_.listMaps();
+        const auto found = std::find_if(maps.begin(), maps.end(), [&](const Row &r) { return r[1] == *name; });
+        return found == maps.end() ? std::nullopt : std::optional<long>{std::stol((*found)[0])};
+    }
+
+    // Makes a library map the active one; asks for confirmation when it was refused.
+    bool loadMapFlow(long id) {
+        try {
+            ops_.loadMap(id, false);
+            return true;
+        } catch (const OpError &e) {
+            if (!confirm(std::string(e.what()) + "\n" + _("Load anyway?"))) {
+                return false;
+            }
+            ops_.loadMap(id, true);
+            return true;
+        }
+    }
+
     void mapsDialog() {
         auto cache = std::make_shared<Rows>();
         showDialog(new ListDialog(
@@ -296,35 +421,16 @@ private:
                      }
                  }, false},
                 {_("~G~enerate map"), [this](long) {
-                     auto name = ask(_("Generate map"), _("Name in the library:"));
-                     if (!name) return;
-                     auto seed = ask(_("Generate map"), _("Seed (number):"), std::to_string(std::time(nullptr)));
-                     if (!seed) return;
-                     auto size = ask(_("Generate map"), _("Face size in pixels (16-1024):"), "256");
-                     if (!size) return;
-                     char *end = nullptr;
-                     const unsigned long long seedValue = std::strtoull(seed->c_str(), &end, 10);
-                     if (seed->empty() || *end != '\0' || seed->find('-') != std::string::npos) {
-                         throw OpError(_("The seed must be a non-negative whole number."));
+                     if (generateMapFlow("")) {
+                         messageBox(_("The map was generated and saved. Use Load to make it active."),
+                                    mfInformation | mfOKButton);
                      }
-                     const auto chosen = pickDatadisks(ops_.installedDatadisks());
-                     if (!chosen) return;
-                     ops_.generateMap(*name, seedValue, std::atoi(size->c_str()), *chosen);
-                     messageBox(_("The map was generated and saved. Use Load to make it active."),
-                                mfInformation | mfOKButton);
                  }, false},
                 {_("~L~oad"), [this, cache](long i) {
-                     const long id = idOf(*cache, i);
                      if (!confirm(_("Replace the active world map? Restart the server afterwards."))) {
                          return;
                      }
-                     try {
-                         ops_.loadMap(id, false);
-                     } catch (const OpError &e) {
-                         if (confirm(std::string(e.what()) + "\n" + _("Load anyway?"))) {
-                             ops_.loadMap(id, true);
-                         }
-                     }
+                     loadMapFlow(idOf(*cache, i));
                  }},
                 {_("~R~ename"), [this, cache](long i) {
                      if (auto name = ask(_("Rename map"), _("New name:"), (*cache).at(i)[1])) {
@@ -478,13 +584,7 @@ private:
                          return;
                      }
                      const long id = std::stol((*found)[0]);
-                     try {
-                         ops_.loadMap(id, false);
-                     } catch (const OpError &e) {
-                         if (confirm(std::string(e.what()) + "\n" + _("Load anyway?"))) {
-                             ops_.loadMap(id, true);
-                         }
-                     }
+                     loadMapFlow(id);
                  }, false},
             }));
     }
@@ -493,12 +593,16 @@ private:
         showDialog(new ListDialog(
             _("Server"),
             [this] {
+                std::string header = listenText() + "\n" + serviceLine(ops_.serviceStatus());
                 const Row s = ops_.scheduledShutdown();
-                return s.empty() ? std::string(_("No shutdown is scheduled."))
-                                 : std::string(_("Shutdown in ")) + s[0] + " s" + (s[1].empty() ? "" : ": " + s[1]);
+                header += "\n" + (s.empty() ? std::string(_("No shutdown is scheduled."))
+                                           : std::string(_("Shutdown in ")) + s[0] + " s" +
+                                                 (s[1].empty() ? "" : ": " + s[1]));
+                return header;
             },
             [] { return std::vector<std::string>{}; },
             {
+                {_("St~a~rt service"), [this](long) { ops_.startService(); }, false},
                 {_("~S~hut down..."), [this](long) {
                      auto delay = ask(_("Shut down server"), _("Delay in seconds (players see a notice):"), "60");
                      if (!delay) return;
@@ -509,7 +613,8 @@ private:
                      }
                  }, false},
                 {_("~C~ancel shutdown"), [this](long) { ops_.cancelShutdown(); }, false},
-            }));
+            },
+            3));
     }
 
     Ops &ops_;
@@ -520,6 +625,7 @@ int runApp(const std::string &databaseUrl) {
         Db db(databaseUrl);
         Ops ops(db);
         AdminApp app(ops);
+        app.showStartupStatus();
         app.announceUpdates();
         app.run();
         return 0;

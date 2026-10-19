@@ -29,6 +29,13 @@ enum class GeneratorState {
     Unavailable, // not checked (no map, generator missing or failing)
 };
 
+// State of the ishtaria-server systemd unit on this host.
+struct ServiceStatus {
+    enum class State { Running, Stopped, Failed, Unknown };
+    State state = State::Unknown;
+    std::string detail; // why the state could not be told (Unknown only)
+};
+
 struct WorldStatus {
     std::vector<DiskStatus> disks;
     GeneratorState generator = GeneratorState::Unavailable;
@@ -89,6 +96,20 @@ public:
     void deletePortal(long id);
 
     // --- server -------------------------------------------------------------
+    // State of the ishtaria-server systemd unit. Does not throw: the state is
+    // Unknown when systemd is not available on this host.
+    ServiceStatus serviceStatus();
+    // Asks systemd to start the ishtaria-server unit. Throws OpError when it
+    // refuses: starting a unit needs root privileges or a polkit rule for the
+    // ishtaria user.
+    void startService();
+    // The address the server is configured to listen on: the `listen` key of its
+    // configuration (/etc/ishtaria/server.toml, $ISHTARIA_SERVER_CONFIG overrides),
+    // the server's built-in default when the key is absent. Throws OpError when
+    // the configuration cannot be read.
+    std::string serverListen();
+    // False while the server has not created the world yet (run it once first).
+    bool worldInitialised();
     // Row: seconds_left, message (empty when nothing is scheduled).
     Row scheduledShutdown();
     void scheduleShutdown(int delaySeconds, const std::string &message);

@@ -274,3 +274,45 @@ msgstr "Uloženo jako "
 
 msgid "Make it the active world now? Players' progress in the current world is lost. Restart the server afterwards."
 msgstr "Nastavit ji nyní jako aktivní svět? Postup hráčů v současném světě se ztratí. Poté restartujte server."
+
+msgid "Server service: "
+msgstr "Serverová služba: "
+
+msgid "running"
+msgstr "běží"
+
+msgid "stopped"
+msgstr "zastavena"
+
+msgid "failed"
+msgstr "selhala"
+
+msgid "unknown"
+msgstr "neznámý stav"
+
+msgid "unknown ("
+msgstr "neznámý stav ("
+
+msgid "The world is not initialised yet. Start the server once to create it."
+msgstr "Svět ještě není inicializovaný. Pro jeho vytvoření jednou spusťte server."
+
+msgid "No world map is generated yet. Generate a new world now?"
+msgstr "Mapa světa zatím nebyla vygenerována. Vygenerovat nyní nový svět?"
+
+msgid "The new world map is now active. Start (or restart) the server service to serve it."
+msgstr "Nová mapa světa je nyní aktivní. Aby ji server obsloužil, spusťte (nebo restartujte) serverovou službu."
+
+msgid "Datadisks the world was generated with: "
+msgstr "Datadisky, se kterými byl svět vygenerován: "
+
+msgid "Listening on: "
+msgstr "Server poslouchá na: "
+
+msgid "Listening on: unknown ("
+msgstr "Server poslouchá na: neznámé ("
+
+msgid "The server service is not running. Start it now?"
+msgstr "Serverová služba neběží. Spustit ji nyní?"
+
+msgid "St~a~rt service"
+msgstr "~S~pustit službu"

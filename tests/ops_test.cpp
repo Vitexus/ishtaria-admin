@@ -126,6 +126,31 @@ int main() {
     CHECK(ops.scheduledShutdown().empty());
     CHECK(throwsOp([&] { ops.scheduleShutdown(-1, ""); }));
 
+    // startup status: the service state never throws (Unknown without systemd)
+    // and the world exists after the server has run once
+    const auto service = ops.serviceStatus();
+    if (service.state != ServiceStatus::State::Unknown) {
+        CHECK(service.detail.empty());
+    }
+    CHECK(ops.worldInitialised());
+
+    // the listen address comes from the server configuration ($ISHTARIA_SERVER_CONFIG):
+    // the top-level `listen` key, table keys and comments do not count, the default applies
+    CHECK(ops.serverListen() == "0.0.0.0:7400");
+    {
+        std::ofstream out("ops_test_listen.toml");
+        out << "[limits]\nlisten = \"0.0.0.0:9999\"\n";
+    }
+    CHECK(setenv("ISHTARIA_SERVER_CONFIG", "ops_test_listen.toml", 1) == 0);
+    CHECK(ops.serverListen() == "0.0.0.0:7400"); // a table key is not the top-level key
+    {
+        std::ofstream out("ops_test_listen.toml", std::ios::trunc);
+        out << "# listen = \"commented out\"\nlisten = \"127.0.0.1:7500\"\n";
+    }
+    CHECK(ops.serverListen() == "127.0.0.1:7500");
+    CHECK(std::remove("ops_test_listen.toml") == 0);
+    unsetenv("ISHTARIA_SERVER_CONFIG");
+
     ops.generateMap("generated", 99, 16);
     CHECK(ops.listMaps().size() == 2);
     CHECK(db.exec("SELECT seed || face_size::text FROM world_maps WHERE name = 'generated'")[0][0] == "9916");

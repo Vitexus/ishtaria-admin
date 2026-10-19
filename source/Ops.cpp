@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
+#include <fstream>
 #include <unistd.h>
 #include <libpq-fe.h>
 #include <regex>
@@ -243,6 +244,13 @@ std::string runGenerator(const std::string &program, const std::vector<std::stri
 std::string serverProgram() {
     const char *path = std::getenv("ISHTARIA_SERVER");
     return path != nullptr ? path : "ishtaria-server";
+}
+
+// The server configuration path: the one the systemd unit starts it with,
+// unless an environment override says otherwise.
+std::string serverConfigPath() {
+    const char *path = std::getenv("ISHTARIA_SERVER_CONFIG");
+    return path != nullptr ? path : "/etc/ishtaria/server.toml";
 }
 
 // Runs a program without a shell; returns standard output and error together.
@@ -619,6 +627,84 @@ void Ops::deletePortal(long id) {
 }
 
 // --- server -------------------------------------------------------------------
+
+ServiceStatus Ops::serviceStatus() {
+    ServiceStatus status;
+    int exitCode = 0;
+    std::string output;
+    try {
+        output = captureOutput("systemctl", {"is-active", "ishtaria-server"}, exitCode);
+    } catch (const OpError &e) {
+        status.detail = e.what();
+        return status;
+    }
+    if (exitCode == 127) {
+        status.detail = "systemctl is not installed";
+        return status;
+    }
+    // The first line of stdout is the state; systemctl writes diagnostics after it.
+    const auto lineEnd = output.find('\n');
+    const std::string state = output.substr(0, lineEnd == std::string::npos ? output.size() : lineEnd);
+    if (state == "active") {
+        status.state = ServiceStatus::State::Running;
+    } else if (state == "inactive") {
+        status.state = ServiceStatus::State::Stopped;
+    } else if (state == "failed") {
+        status.state = ServiceStatus::State::Failed;
+    } else {
+        status.detail = state.empty() ? "systemctl did not report a state" : state;
+    }
+    return status;
+}
+
+void Ops::startService() {
+    int status = 0;
+    std::string output;
+    try {
+        output = captureOutput("systemctl", {"start", "ishtaria-server"}, status);
+    } catch (const OpError &e) {
+        throw OpError(std::string("Cannot start the ishtaria-server service: ") + e.what());
+    }
+    if (status == 0) {
+        return;
+    }
+    std::string message = "Cannot start the ishtaria-server service" +
+                          (output.empty() ? "." : ": " + output);
+    if (output.find("uthenticat") != std::string::npos ||
+        output.find("ccess denied") != std::string::npos) {
+        message += "\nStarting a unit needs root privileges or a polkit rule for the ishtaria user.";
+    }
+    throw OpError(message);
+}
+
+std::string Ops::serverListen() {
+    const std::string path = serverConfigPath();
+    std::ifstream config(path);
+    if (!config) {
+        throw OpError("Cannot read the server configuration " + path + ".");
+    }
+    // Top-level TOML only: no key can follow a table header, commented lines do not count.
+    static const std::regex listenRe("^\\s*listen\\s*=\\s*\"([^\"]*)\"");
+    std::string line;
+    while (std::getline(config, line)) {
+        const auto first = line.find_first_not_of(" \t\r");
+        if (first == std::string::npos || line[first] == '#') {
+            continue;
+        }
+        if (line[first] == '[') {
+            break;
+        }
+        std::smatch match;
+        if (std::regex_search(line, match, listenRe)) {
+            return match[1].str();
+        }
+    }
+    return "0.0.0.0:7400"; // the server's built-in default (default_listen in main.rs)
+}
+
+bool Ops::worldInitialised() {
+    return !db_.exec("SELECT 1 FROM worlds LIMIT 1").empty();
+}
 
 Row Ops::scheduledShutdown() {
     const auto rows = db_.exec("SELECT GREATEST(0, CEIL(EXTRACT(EPOCH FROM shutdown_at - now())))::bigint::text, "
