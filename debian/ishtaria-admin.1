@@ -7,10 +7,12 @@ ishtaria-admin \- text-mode administration of an Ishtaria world server
 .SH DESCRIPTION
 Turbo Vision interface for the server operator: save, load, rename, delete and
 export world maps; rename, ban and delete players; manage portals to linked
-worlds; start the server service; schedule a server shutdown with a notice
-shown to players. At start-up it reports the service state, the address the
-server listens on and the datadisks the world was generated with, and offers
-to generate a first world map or start a stopped service.
+worlds; start or stop the server systemd service; schedule a server shutdown
+with a notice shown to players; run a first-time setup / factory-reset wizard
+(F7) that wipes the database, regenerates the world and restarts the service.
+At start-up it reports the service state, the address the server listens on
+and the datadisks the world was generated with, and offers the setup wizard
+when no world exists yet or start a stopped service.
 .PP
 It talks directly to the PostgreSQL database of ishtaria-server. Run it as the
 service user: \fBsudo \-u ishtaria ishtaria\-admin\fR. Started as root without an

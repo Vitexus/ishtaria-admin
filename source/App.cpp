@@ -18,6 +18,8 @@
 #define Uses_TStatusDef
 #define Uses_MsgBox
 #define Uses_TProgram
+#define Uses_TDrawBuffer
+#define Uses_TScreen
 #include <tvision/tv.h>
 
 #include "ishtariaadmin/App.h"
@@ -26,6 +28,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <ctime>
 #include <functional>
 #include <memory>
@@ -43,6 +46,7 @@ enum : ushort {
     cmPortals,
     cmServer,
     cmWorldStatus,
+    cmSetupWizard,
     cmAction = 1100, // + action index
 };
 
@@ -110,6 +114,78 @@ std::string safeFileName(std::string name) {
 
 std::string pad(const std::string &text, std::size_t width) {
     return text.size() >= width ? text.substr(0, width) : text + std::string(width - text.size(), ' ');
+}
+
+// Growing bar filled from ishtaria-worldgen PROGRESS lines (done/total face rows).
+// Draws `[####----]  42%` so the percentage updates without replacing TStaticText.
+class ProgressBarView : public TView {
+public:
+    explicit ProgressBarView(const TRect &bounds) : TView(bounds) {}
+
+    void setProgress(unsigned done, unsigned total) {
+        done_ = done;
+        total_ = total == 0 ? 1 : total;
+        drawView();
+    }
+
+    TPalette &getPalette() const override {
+        // Same single text colour slot as TStaticText (mapped through the dialog).
+        static TPalette palette("\x06", 1);
+        return palette;
+    }
+
+    void draw() override {
+        TDrawBuffer b;
+        const short width = size.x;
+        constexpr short kPctWidth = 5; // " 100%"
+        const short barWidth = width > kPctWidth + 2 ? static_cast<short>(width - kPctWidth - 2) : 1;
+        const unsigned filled =
+            std::min<unsigned>(static_cast<unsigned>(barWidth),
+                               (done_ * static_cast<unsigned>(barWidth)) / total_);
+        const TColorAttr attr = getColor(1);
+        b.moveChar(0, '[', attr, 1);
+        for (short i = 0; i < barWidth; ++i) {
+            b.moveChar(static_cast<ushort>(i + 1), i < static_cast<short>(filled) ? '#' : '-', attr, 1);
+        }
+        b.moveChar(static_cast<ushort>(barWidth + 1), ']', attr, 1);
+        char pct[8];
+        const unsigned percent = (done_ * 100) / total_;
+        std::snprintf(pct, sizeof(pct), "%3u%%", percent);
+        b.moveStr(static_cast<ushort>(barWidth + 2), pct, attr);
+        writeLine(0, 0, width, 1, b);
+    }
+
+private:
+    unsigned done_ = 0;
+    unsigned total_ = 1;
+};
+
+// Shows a modal-looking progress dialog while `work` runs with a GeneratorProgress callback.
+// Used for Generate map, Prepare update and the generator check in World status.
+template <typename Work>
+void withGeneratorProgress(const char *title, Work &&work) {
+    auto *dialog = new TDialog(TRect(0, 0, 52, 9), title);
+    dialog->options |= ofCentered;
+    dialog->insert(new TStaticText(TRect(2, 2, 50, 3), _("Generating world map...")));
+    auto *bar = new ProgressBarView(TRect(2, 4, 50, 5));
+    dialog->insert(bar);
+    TProgram::deskTop->insert(dialog);
+    dialog->drawView();
+    TScreen::flushScreen();
+
+    GeneratorProgress progress = [bar](unsigned done, unsigned total) {
+        bar->setProgress(done, total);
+        TScreen::flushScreen();
+    };
+    try {
+        work(progress);
+    } catch (...) {
+        TObject::destroy(dialog);
+        TProgram::deskTop->redraw();
+        throw;
+    }
+    TObject::destroy(dialog);
+    TProgram::deskTop->redraw();
 }
 
 // List viewer that renders externally owned text rows.
@@ -240,36 +316,37 @@ public:
         case cmPortals: portalsDialog(); break;
         case cmServer: serverDialog(); break;
         case cmWorldStatus: worldStatusDialog(); break;
+        case cmSetupWizard:
+            try {
+                runSetupWizard(false);
+            } catch (const std::exception &e) {
+                showError(e.what());
+            }
+            break;
         default: return;
         }
         clearEvent(event);
     }
 
     // Shown once at start-up: the systemd service state, the port the server
-    // listens on, the datadisks the world was generated with, an offer to generate
-    // a first world when none exists yet and to start a stopped service.
+    // listens on, the datadisks the world was generated with, an offer to run the
+    // first-time setup wizard when no world exists yet, and to start a stopped service.
     void showStartupStatus() {
         ServiceStatus service = ops_.serviceStatus();
         std::string text = serviceLine(service);
         try {
-            if (!ops_.worldInitialised()) {
-                messageBox((text + "\n" +
-                            _("The world is not initialised yet. Start the server once to create it."))
-                               .c_str(),
-                           mfInformation | mfOKButton);
-                return;
-            }
-            const Row map = ops_.activeMap();
-            if (map[0].empty()) {
-                if (confirm(text + "\n" + _("No world map is generated yet. Generate a new world now?"))) {
-                    const auto generated = generateMapFlow("world");
-                    if (generated && loadMapFlow(*generated)) {
-                        messageBox(_("The new world map is now active. Start (or restart) the server service to serve it."),
-                                   mfInformation | mfOKButton);
-                    }
+            if (ops_.needsSetup()) {
+                const bool fresh = !ops_.worldInitialised();
+                const std::string prompt =
+                    text + "\n" +
+                    (fresh ? _("The world is not initialised yet. Run the first-time setup wizard now?")
+                           : _("No world map is generated yet. Run the first-time setup wizard now?"));
+                if (confirm(prompt)) {
+                    runSetupWizard(true);
                 }
                 return;
             }
+            const Row map = ops_.activeMap();
             std::string worldText = "\n" + listenText();
             worldText += "\n" + std::string(_("Active map: seed ")) + map[0] + ", " + map[1] + " px";
             const WorldStatus status = ops_.worldStatus(false);
@@ -288,9 +365,15 @@ public:
                 service.state == ServiceStatus::State::Failed) {
                 if (confirm(text + worldText + "\n\n" +
                             _("The server service is not running. Start it now?"))) {
-                    ops_.startService();
-                    service = ops_.serviceStatus();
-                    text = serviceLine(service);
+                    try {
+                        ops_.startService();
+                        service = ops_.serviceStatus();
+                        text = serviceLine(service);
+                    } catch (const std::exception &e) {
+                        showError(e.what());
+                        service = ops_.serviceStatus();
+                        text = serviceLine(service);
+                    }
                 }
             }
             text += worldText;
@@ -301,13 +384,31 @@ public:
         messageBox(text.c_str(), mfInformation | mfOKButton);
     }
 
-    // Tells the operator at start-up when the data served to players can be refreshed.
+    // Tells the operator at start-up when the data served to players can be refreshed,
+    // or when an installed datadisk fails to load (rejected manifest, etc.).
     void announceUpdates() {
         try {
-            const WorldStatus status = ops_.worldStatus();
-            if (status.updateAvailable() &&
-                confirm(std::string(_("An update of the world data is available.")) + "\n" + describeUpdates(status) + "\n" +
-                        _("Open the world status now?"))) {
+            if (ops_.needsSetup()) {
+                return;
+            }
+            WorldStatus status;
+            withGeneratorProgress(_("Checking generator"), [&](GeneratorProgress progress) {
+                status = ops_.worldStatus(true, std::move(progress));
+            });
+            const bool loadErrors = status.hasDiskLoadErrors();
+            if (!status.updateAvailable() && !loadErrors) {
+                return;
+            }
+            std::string text;
+            if (status.updateAvailable()) {
+                text += std::string(_("An update of the world data is available.")) + "\n";
+            }
+            if (loadErrors) {
+                text += std::string(_("Some installed datadisks failed to load.")) + "\n";
+            }
+            text += describeUpdates(status);
+            text += "\n" + std::string(_("Open the world status now?"));
+            if (confirm(text)) {
                 worldStatusDialog();
             }
         } catch (const std::exception &) {
@@ -324,6 +425,7 @@ public:
                 *new TMenuItem(_("~L~inked worlds..."), cmPortals, kbF4, hcNoContext, "F4") +
                 *new TMenuItem(_("~S~erver..."), cmServer, kbF5, hcNoContext, "F5") +
                 *new TMenuItem(_("World s~t~atus..."), cmWorldStatus, kbF6, hcNoContext, "F6") +
+                *new TMenuItem(_("Setup / ~R~eset world..."), cmSetupWizard, kbF7, hcNoContext, "F7") +
                 newLine() +
                 *new TMenuItem(_("E~x~it"), cmQuit, kbAltX, hcNoContext, "Alt-X"));
     }
@@ -337,6 +439,7 @@ public:
                 *new TStatusItem(_("~F4~ Linked worlds"), kbF4, cmPortals) +
                 *new TStatusItem(_("~F5~ Server"), kbF5, cmServer) +
                 *new TStatusItem(_("~F6~ Status"), kbF6, cmWorldStatus) +
+                *new TStatusItem(_("~F7~ Setup"), kbF7, cmSetupWizard) +
                 *new TStatusItem(_("~Alt-X~ Exit"), kbAltX, cmQuit) +
                 *new TStatusItem("v" ISHTARIA_ADMIN_VERSION, kbNoKey, 0));
     }
@@ -361,6 +464,80 @@ private:
         }
     }
 
+    // First-time / factory-reset wizard: stop the systemd unit, wipe the public
+    // schema, generate and import a new world, then start the service again.
+    // `offeredAtStartup` skips the opening "open the wizard?" confirm.
+    void runSetupWizard(bool offeredAtStartup) {
+        const bool hadWorld = ops_.worldInitialised() && !ops_.activeMap()[0].empty();
+        const long players = ops_.playerCount();
+        std::string intro = _("This wizard stops the ishtaria-server systemd service, "
+                              "deletes every account and world change in the database, "
+                              "generates a new planet and imports it, then starts the service again.");
+        if (hadWorld) {
+            intro += "\n\n";
+            intro += _("WARNING: this completely resets the world.");
+            if (players > 0) {
+                intro += "\n";
+                intro += _("Accounts that will be deleted: ") + std::to_string(players);
+            }
+        }
+        if (!offeredAtStartup && !confirm(intro + "\n\n" + _("Continue with the setup wizard?"))) {
+            return;
+        }
+        if (offeredAtStartup && hadWorld &&
+            !confirm(intro + "\n\n" + _("Continue with the setup wizard?"))) {
+            return;
+        }
+        if (hadWorld) {
+            auto typed = ask(_("Reset confirmation"), _("Type RESET to wipe the database:"));
+            if (!typed || *typed != "RESET") {
+                messageBox(_("Reset cancelled."), mfInformation | mfOKButton);
+                return;
+            }
+        }
+
+        auto seed = ask(_("Setup wizard"), _("Seed (number):"), std::to_string(std::time(nullptr)));
+        if (!seed) {
+            return;
+        }
+        auto size = ask(_("Setup wizard"), _("Face size in pixels (16-1024):"), "256");
+        if (!size) {
+            return;
+        }
+        char *end = nullptr;
+        const unsigned long long seedValue = std::strtoull(seed->c_str(), &end, 10);
+        if (seed->empty() || *end != '\0' || seed->find('-') != std::string::npos) {
+            throw OpError(_("The seed must be a non-negative whole number."));
+        }
+        const int faceSize = std::atoi(size->c_str());
+        if (faceSize < 16 || faceSize > 1024) {
+            throw OpError(_("The face size must be 16-1024."));
+        }
+        const auto chosen = pickDatadisks(ops_.installedDatadisks());
+        if (!chosen) {
+            return;
+        }
+
+        const bool wasRunning = ops_.serviceStatus().state == ServiceStatus::State::Running;
+        if (wasRunning || ops_.serviceStatus().state == ServiceStatus::State::Failed) {
+            ops_.stopService();
+        }
+        ops_.resetDatabase();
+        withGeneratorProgress(_("Setup wizard"), [&](GeneratorProgress progress) {
+            ops_.bootstrapWorld(seedValue, faceSize, *chosen, std::move(progress));
+        });
+        try {
+            ops_.startService();
+        } catch (const std::exception &e) {
+            messageBox((std::string(_("The new world is ready, but the service did not start:\n")) + e.what())
+                           .c_str(),
+                       mfError | mfOKButton);
+            return;
+        }
+        messageBox(_("Setup finished. The world was regenerated and the server service is running."),
+                   mfInformation | mfOKButton);
+    }
+
     // Asks for the name, seed, face size and datadisks, generates the map into the
     // library and returns its id (nullopt when the operator cancelled).
     std::optional<long> generateMapFlow(const std::string &defaultName) {
@@ -377,7 +554,9 @@ private:
         }
         const auto chosen = pickDatadisks(ops_.installedDatadisks());
         if (!chosen) return std::nullopt;
-        ops_.generateMap(*name, seedValue, std::atoi(size->c_str()), *chosen);
+        withGeneratorProgress(_("Generate map"), [&](GeneratorProgress progress) {
+            ops_.generateMap(*name, seedValue, std::atoi(size->c_str()), *chosen, std::move(progress));
+        });
         const auto maps = ops_.listMaps();
         const auto found = std::find_if(maps.begin(), maps.end(), [&](const Row &r) { return r[1] == *name; });
         return found == maps.end() ? std::nullopt : std::optional<long>{std::stol((*found)[0])};
@@ -534,6 +713,12 @@ private:
             if (d.newer) {
                 text += std::string(_("Datadisk ")) + d.id + ": " + d.worldVersion + " -> " + d.installedVersion + "\n";
             }
+            if (!d.loadError.empty()) {
+                text += std::string(_("Datadisk ")) + d.id + ": " + d.loadError + "\n";
+            }
+        }
+        for (const auto &f : status.otherDiskFailures) {
+            text += std::string(_("Datadisk ")) + f.first + ": " + f.second + "\n";
         }
         if (status.generator == GeneratorState::Changed) {
             text += std::string(_("The installed generator produces a different map for this seed.")) + "\n";
@@ -541,27 +726,60 @@ private:
         return text;
     }
 
+    // Wrap a long server error into list rows that fit the dialog width.
+    static void appendWrapped(std::vector<std::string> &out, const std::string &prefix, const std::string &text) {
+        constexpr std::size_t kWidth = 70;
+        std::string line = prefix + text;
+        while (line.size() > kWidth) {
+            out.push_back(line.substr(0, kWidth));
+            line = std::string(prefix.size(), ' ') + line.substr(kWidth);
+        }
+        if (!line.empty()) {
+            out.push_back(line);
+        }
+    }
+
     void worldStatusDialog() {
         auto status = std::make_shared<WorldStatus>();
         showDialog(new ListDialog(
             _("World status"),
             [this, status] {
-                *status = ops_.worldStatus();
+                withGeneratorProgress(_("Checking generator"), [&](GeneratorProgress progress) {
+                    *status = ops_.worldStatus(true, std::move(progress));
+                });
                 std::string generator;
                 switch (status->generator) {
                 case GeneratorState::Current: generator = _("Generator: map is reproduced exactly (up to date)"); break;
                 case GeneratorState::Changed: generator = _("Generator: a newer generator gives a different map"); break;
                 case GeneratorState::Unavailable: generator = std::string(_("Generator: not checked (")) + status->generatorDetail + ")"; break;
                 }
-                return generator + "\n" + (status->updateAvailable() ? _("Update available: prepare it below.") : _("Nothing to update."));
+                std::string line = status->updateAvailable() ? _("Update available: prepare it below.") : _("Nothing to update.");
+                if (status->hasDiskLoadErrors()) {
+                    line += "\n" + std::string(_("Datadisk load errors are listed below."));
+                }
+                return generator + "\n" + line;
             },
             [status] {
                 std::vector<std::string> out;
                 for (const auto &d : status->disks) {
-                    const std::string state = d.installedVersion.empty() ? _("not installed")
-                                              : d.newer                  ? std::string(_("NEWER: ")) + d.installedVersion
-                                                                         : _("up to date");
+                    std::string state;
+                    if (!d.loadError.empty()) {
+                        state = _("cannot load");
+                    } else if (d.installedVersion.empty()) {
+                        state = _("not installed");
+                    } else if (d.newer) {
+                        state = std::string(_("NEWER: ")) + d.installedVersion;
+                    } else {
+                        state = _("up to date");
+                    }
                     out.push_back(pad(d.id, 18) + pad(d.worldVersion, 10) + state);
+                    if (!d.loadError.empty()) {
+                        appendWrapped(out, "  ", d.loadError);
+                    }
+                }
+                for (const auto &f : status->otherDiskFailures) {
+                    out.push_back(pad(f.first, 18) + pad("-", 10) + _("cannot load"));
+                    appendWrapped(out, "  ", f.second);
                 }
                 if (out.empty()) {
                     out.push_back(_("The world uses no datadisks."));
@@ -576,7 +794,10 @@ private:
                      if (!confirm(_("Generate an updated map with the same seed and the installed datadisks and save it in the library?"))) {
                          return;
                      }
-                     const std::string name = ops_.prepareWorldUpdate();
+                     std::string name;
+                     withGeneratorProgress(_("Prepare update"), [&](GeneratorProgress progress) {
+                         name = ops_.prepareWorldUpdate(std::move(progress));
+                     });
                      const auto maps = ops_.listMaps();
                      const auto found = std::find_if(maps.begin(), maps.end(), [&](const Row &r) { return r[1] == name; });
                      if (found == maps.end() ||
@@ -586,7 +807,8 @@ private:
                      const long id = std::stol((*found)[0]);
                      loadMapFlow(id);
                  }, false},
-            }));
+            },
+            3));
     }
 
     void serverDialog() {
@@ -603,6 +825,11 @@ private:
             [] { return std::vector<std::string>{}; },
             {
                 {_("St~a~rt service"), [this](long) { ops_.startService(); }, false},
+                {_("Sto~p~ service"), [this](long) {
+                     if (confirm(_("Stop the ishtaria-server systemd service now?"))) {
+                         ops_.stopService();
+                     }
+                 }, false},
                 {_("~S~hut down..."), [this](long) {
                      auto delay = ask(_("Shut down server"), _("Delay in seconds (players see a notice):"), "60");
                      if (!delay) return;
@@ -613,6 +840,83 @@ private:
                      }
                  }, false},
                 {_("~C~ancel shutdown"), [this](long) { ops_.cancelShutdown(); }, false},
+                {_("Setup / ~R~eset..."), [this](long) { runSetupWizard(false); }, false},
+                {_("World ~t~ime..."), [this](long) { clockDialog(); }, false},
+            },
+            3));
+    }
+
+    // The world's shared solar clock (the Day/Night spells jump it too): where it
+    // stands at the prime meridian, with jumps to the next dawn, dusk or a chosen hour.
+    void clockDialog() {
+        showDialog(new ListDialog(
+            _("World clock"),
+            [this] {
+                const SolarClock clock = ops_.solarClock();
+                std::string header =
+                    _("The world's shared solar clock; the Day and Night spells jump it too.");
+                header += "\n" +
+                          std::string(_("Local solar time at the prime meridian (centre of face 0): ")) +
+                          clock.localTime + (clock.day ? _(" (day)") : _(" (night)"));
+                header += "\n" + std::string(_("Real time there: ")) + clock.realTime +
+                          std::string(_("; offset from the real clock: ")) +
+                          (clock.offsetSeconds >= 0 ? "+" : "") +
+                          std::to_string(clock.offsetSeconds) + " s";
+                return header;
+            },
+            [] { return std::vector<std::string>{}; },
+            {
+                {_("~D~ay (dawn)"), [this](long) {
+                     if (confirm(_("Jump the world's clock to the next dawn at the prime meridian? "
+                                   "Every player sees the sky change."))) {
+                         ops_.setSolarClock(true);
+                     }
+                 }, false},
+                {_("~N~ight (dusk)"), [this](long) {
+                     if (confirm(_("Jump the world's clock to the next dusk at the prime meridian? "
+                                   "Every player sees the sky change."))) {
+                         ops_.setSolarClock(false);
+                     }
+                 }, false},
+                {_("~H~our..."), [this](long) {
+                     // Defaults to the real hour: accepting it syncs the world clock back.
+                     auto input = ask(_("World clock"),
+                                      _("Hour at the prime meridian (H or HH:MM):"),
+                                      ops_.solarClock().realTime.substr(0, 5));
+                     if (!input) {
+                         return;
+                     }
+                     std::string text = *input;
+                     while (!text.empty() && std::isspace(static_cast<unsigned char>(text.front()))) {
+                         text.erase(text.begin());
+                     }
+                     while (!text.empty() && std::isspace(static_cast<unsigned char>(text.back()))) {
+                         text.pop_back();
+                     }
+                     int hour = -1, minute = 0, consumed = 0;
+                     const bool withMinutes =
+                         std::sscanf(text.c_str(), "%d:%d%n", &hour, &minute, &consumed) == 2 &&
+                         consumed == static_cast<int>(text.size());
+                     const bool hourOnly =
+                         !withMinutes &&
+                         std::sscanf(text.c_str(), "%d%n", &hour, &consumed) == 1 &&
+                         consumed == static_cast<int>(text.size());
+                     if (!withMinutes && !hourOnly) {
+                         throw OpError(_("Use an hour 0-23 or a time HH:MM."));
+                     }
+                     if (!withMinutes) {
+                         minute = 0;
+                     }
+                     if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+                         throw OpError(_("The hour must be 0-23 and the minute 0-59."));
+                     }
+                     char chosen[8];
+                     std::snprintf(chosen, sizeof(chosen), "%02d:%02d", hour, minute);
+                     if (confirm(std::string(_("Jump the world's clock to ")) + chosen +
+                                 _(" at the prime meridian? Every player sees the sky change."))) {
+                         ops_.setSolarClockTime(hour, minute);
+                     }
+                 }, false},
             },
             3));
     }
@@ -623,7 +927,7 @@ private:
 int runApp(const std::string &databaseUrl) {
     try {
         Db db(databaseUrl);
-        Ops ops(db);
+        Ops ops(db, databaseUrl);
         AdminApp app(ops);
         app.showStartupStatus();
         app.announceUpdates();

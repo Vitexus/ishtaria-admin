@@ -35,7 +35,7 @@ int main() {
         return 77;
     }
     Db db(url);
-    Ops ops(db);
+    Ops ops(db, url);
 
     // maps
     CHECK(!ops.activeMap()[0].empty());
@@ -133,9 +133,13 @@ int main() {
         CHECK(service.detail.empty());
     }
     CHECK(ops.worldInitialised());
+    CHECK(!ops.needsSetup());
+    CHECK(ops.playerCount() == 1);
 
     // the listen address comes from the server configuration ($ISHTARIA_SERVER_CONFIG):
     // the top-level `listen` key, table keys and comments do not count, the default applies
+    const char *savedConfig = std::getenv("ISHTARIA_SERVER_CONFIG");
+    const std::string savedConfigCopy = savedConfig != nullptr ? savedConfig : "";
     CHECK(ops.serverListen() == "0.0.0.0:7400");
     {
         std::ofstream out("ops_test_listen.toml");
@@ -149,7 +153,12 @@ int main() {
     }
     CHECK(ops.serverListen() == "127.0.0.1:7500");
     CHECK(std::remove("ops_test_listen.toml") == 0);
-    unsetenv("ISHTARIA_SERVER_CONFIG");
+    // Restore the test harness config; bootstrapWorld needs a readable server.toml.
+    if (savedConfig != nullptr) {
+        setenv("ISHTARIA_SERVER_CONFIG", savedConfigCopy.c_str(), 1);
+    } else {
+        unsetenv("ISHTARIA_SERVER_CONFIG");
+    }
 
     ops.generateMap("generated", 99, 16);
     CHECK(ops.listMaps().size() == 2);
@@ -207,6 +216,20 @@ int main() {
     CHECK(ops.listMaps().size() == 1);
     ops.deleteMap(std::stol(ops.listMaps()[0][0]));
     CHECK(ops.listMaps().empty());
+
+    // First-time setup: wipe the schema and import a fresh world (no systemd unit here;
+    // serviceStatus is Unknown, so reset is allowed).
+    ops.resetDatabase();
+    CHECK(!ops.worldInitialised());
+    CHECK(ops.needsSetup());
+    CHECK(ops.playerCount() == 0);
+    ops.bootstrapWorld(12345, 16, {"testdisk"});
+    CHECK(ops.worldInitialised());
+    CHECK(!ops.needsSetup());
+    CHECK(ops.activeMap()[0] == "12345");
+    CHECK(ops.activeMap()[1] == "16");
+    CHECK(db.exec("SELECT disk_id FROM world_datadisks")[0][0] == "testdisk");
+    CHECK(throwsOp([&] { ops.bootstrapWorld(1, 16); })); // already imported
 
     if (failures == 0) {
         std::cout << "all ops tests passed\n";

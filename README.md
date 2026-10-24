@@ -12,17 +12,24 @@ ishtaria-admin --database-url=postgresql:///other?host=/var/run/postgresql
 At start-up the tool shows the state of the `ishtaria-server` systemd unit
 (running/stopped/failed), the address the server is configured to listen on,
 the active map and the datadisks the world was generated with; when the world
-is not initialised yet it says so, when no world map exists it offers
-generating a first one (seed, face size, datadisks) and making it active right
-away, and when the service is stopped it offers starting it.
+is not initialised yet or has no map it offers the first-time setup wizard
+(seed, face size, datadisks), and when the service is stopped it offers starting it.
 
 | Menu (key) | Function |
 | --- | --- |
 | World maps (F2) | save the active map into the library, generate, load, rename, delete, export `.pgm`; when story datadisks are installed, *Generate map* offers a checkbox per disk to take it into account (stored with the map, applied on *Load*) |
 | Players (F3) | rename, ban/unban (revokes sessions), delete (not possible with a permanent memorial) |
 | Linked worlds (F4) | list portals; a link waiting for approval shows as `pending`: *Open* approves it, *Close* breaks it (the other world is told); create, disable, ban or delete portals |
-| Server (F5) | shows the service state and the address the server listens on; start the service (needs root privileges or a polkit rule for the `ishtaria` user), schedule a shutdown with a delay and message, or cancel it |
+| Server (F5) | shows the service state and the address the server listens on; start or stop the service via `sudo -n` (needs `/etc/sudoers.d/ishtaria-server` from the server package) and verifies start stayed active — on failure shows journal errors such as a busy listen port; schedule a shutdown with a delay and message, or cancel it; *Setup / Reset* opens the wizard |
 | World status (F6) | compares the world's datadisks with the installed ones and re-runs the generator for the active seed; a newer datadisk or a changed generator is announced at start-up, and *Prepare update* saves a map regenerated with the installed versions (then optionally loads it) |
+| Setup / Reset (F7) | first-time setup and factory reset: stops the systemd unit, drops the public schema (all accounts and world data), generates and imports a new planet (`ishtaria-server --import-only`), then starts the service; an existing world requires typing `RESET` |
+
+While `ishtaria-worldgen` runs (Generate map, Prepare update, or the generator check), the tool
+shows a growing progress bar fed by the generator's `PROGRESS done/total` lines on stderr.
+
+When `ishtaria-server --list-datadisks` skips a disk (rejected `datadisk.yaml`, missing files),
+World status shows **cannot load** and the server's error text instead of a silent
+**not installed**; Prepare update repeats that message if the world still names the disk.
 
 The generator has no recorded version: it counts as changed when the installed `ishtaria-worldgen`
 produces a map with a different SHA-256 for the active seed and face size. Updating means a new

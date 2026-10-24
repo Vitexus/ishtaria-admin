@@ -254,6 +254,15 @@ msgstr "Není co aktualizovat."
 msgid "not installed"
 msgstr "není nainstalován"
 
+msgid "cannot load"
+msgstr "nelze načíst"
+
+msgid "Datadisk load errors are listed below."
+msgstr "Chyby načtení datadisků jsou v seznamu níže."
+
+msgid "Some installed datadisks failed to load."
+msgstr "Některé nainstalované datadisky se nepodařilo načíst."
+
 msgid "NEWER: "
 msgstr "NOVĚJŠÍ: "
 
@@ -265,6 +274,15 @@ msgstr "Svět nepoužívá žádné datadisky."
 
 msgid "~P~repare update"
 msgstr "~P~řipravit aktualizaci"
+
+msgid "Prepare update"
+msgstr "Připravit aktualizaci"
+
+msgid "Generating world map..."
+msgstr "Generuji mapu světa..."
+
+msgid "Checking generator"
+msgstr "Kontrola generátoru"
 
 msgid "Generate an updated map with the same seed and the installed datadisks and save it in the library?"
 msgstr "Vygenerovat aktualizovanou mapu se stejným seedem a nainstalovanými datadisky a uložit ji do knihovny?"
@@ -293,14 +311,11 @@ msgstr "neznámý stav"
 msgid "unknown ("
 msgstr "neznámý stav ("
 
-msgid "The world is not initialised yet. Start the server once to create it."
-msgstr "Svět ještě není inicializovaný. Pro jeho vytvoření jednou spusťte server."
+msgid "The world is not initialised yet. Run the first-time setup wizard now?"
+msgstr "Svět ještě není inicializovaný. Spustit průvodce prvním nastavením?"
 
-msgid "No world map is generated yet. Generate a new world now?"
-msgstr "Mapa světa zatím nebyla vygenerována. Vygenerovat nyní nový svět?"
-
-msgid "The new world map is now active. Start (or restart) the server service to serve it."
-msgstr "Nová mapa světa je nyní aktivní. Aby ji server obsloužil, spusťte (nebo restartujte) serverovou službu."
+msgid "No world map is generated yet. Run the first-time setup wizard now?"
+msgstr "Mapa světa zatím nebyla vygenerována. Spustit průvodce prvním nastavením?"
 
 msgid "Datadisks the world was generated with: "
 msgstr "Datadisky, se kterými byl svět vygenerován: "
@@ -316,3 +331,51 @@ msgstr "Serverová služba neběží. Spustit ji nyní?"
 
 msgid "St~a~rt service"
 msgstr "~S~pustit službu"
+
+msgid "Sto~p~ service"
+msgstr "~Z~astavit službu"
+
+msgid "Stop the ishtaria-server systemd service now?"
+msgstr "Zastavit nyní systemd službu ishtaria-server?"
+
+msgid "Setup / ~R~eset world..."
+msgstr "Nastavení / ~O~bnovit svět..."
+
+msgid "Setup / ~R~eset..."
+msgstr "Nastavení / ~O~bnovit..."
+
+msgid "~F7~ Setup"
+msgstr "~F7~ Nastavení"
+
+msgid "This wizard stops the ishtaria-server systemd service, deletes every account and world change in the database, generates a new planet and imports it, then starts the service again."
+msgstr "Tento průvodce zastaví systemd službu ishtaria-server, smaže všechny účty a změny světa v databázi, vygeneruje novou planetu, importuje ji a službu znovu spustí."
+
+msgid "WARNING: this completely resets the world."
+msgstr "VAROVÁNÍ: tímto se svět úplně resetuje."
+
+msgid "Accounts that will be deleted: "
+msgstr "Účty, které budou smazány: "
+
+msgid "Continue with the setup wizard?"
+msgstr "Pokračovat v průvodci nastavením?"
+
+msgid "Reset confirmation"
+msgstr "Potvrzení resetu"
+
+msgid "Type RESET to wipe the database:"
+msgstr "Napište RESET pro smazání databáze:"
+
+msgid "Reset cancelled."
+msgstr "Reset zrušen."
+
+msgid "Setup wizard"
+msgstr "Průvodce nastavením"
+
+msgid "The face size must be 16-1024."
+msgstr "Velikost stěny musí být 16–1024."
+
+msgid "The new world is ready, but the service did not start:\n"
+msgstr "Nový svět je připraven, ale služba se nespustila:\n"
+
+msgid "Setup finished. The world was regenerated and the server service is running."
+msgstr "Nastavení dokončeno. Svět byl znovu vygenerován a serverová služba běží."
