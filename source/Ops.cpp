@@ -669,12 +669,15 @@ void Ops::generateMap(const std::string &name, unsigned long long seed, int face
     if (generatorArgs.empty()) {
         generatorArgs = {std::to_string(seed), std::to_string(faceSize)};
     } else {
-        // A datadisk defines the world's real planet: the seed does not shape it.
+        // A datadisk defines the world's real planet; the seed only sets the local relief
+        // generated into the strip (ADR 0020).
+        generatorArgs.insert(generatorArgs.begin(), {"--seed", std::to_string(seed)});
         generatorArgs.push_back(std::to_string(faceSize));
     }
     const std::string pgm = runGenerator(
         override_path != nullptr ? override_path : "ishtaria-worldgen", generatorArgs, progress);
-    // Validate the P5 header exactly as the server expects it before storing anything.
+    // Validate the P5 header exactly as the server expects it before storing anything:
+    // 16-bit samples (maxval 65535, two bytes each, ADR 0020).
     std::size_t pos = 0;
     auto token = [&]() {
         while (pos < pgm.size() && std::isspace(static_cast<unsigned char>(pgm[pos]))) {
@@ -693,8 +696,8 @@ void Ops::generateMap(const std::string &name, unsigned long long seed, int face
     const long h = std::atol(token().c_str());
     const std::string maxval = token();
     ++pos; // single whitespace after maxval
-    if (w != 6L * faceSize || h != faceSize || maxval != "255" ||
-        pgm.size() - std::min(pos, pgm.size()) != static_cast<std::size_t>(w * h)) {
+    if (w != 6L * faceSize || h != faceSize || maxval != "65535" ||
+        pgm.size() - std::min(pos, pgm.size()) != static_cast<std::size_t>(w * h * 2)) {
         throw OpError("The generated map has an unexpected format.");
     }
     const std::string hex = toHex(pgm);
@@ -757,6 +760,7 @@ WorldStatus Ops::worldStatus(bool checkGenerator, GeneratorProgress progress) {
         if (generatorArgs.empty()) {
             generatorArgs = {map[0][0], map[0][1]};
         } else {
+            generatorArgs.insert(generatorArgs.begin(), {"--seed", map[0][0]});
             generatorArgs.push_back(map[0][1]);
         }
         const std::string pgm = runGenerator(override_path != nullptr ? override_path : "ishtaria-worldgen",
@@ -1312,6 +1316,7 @@ void Ops::bootstrapWorld(unsigned long long seed, int faceSize,
     if (generatorArgs.empty()) {
         generatorArgs = {std::to_string(seed), std::to_string(faceSize)};
     } else {
+        generatorArgs.insert(generatorArgs.begin(), {"--seed", std::to_string(seed)});
         generatorArgs.push_back(std::to_string(faceSize));
     }
     const char *override_path = std::getenv("ISHTARIA_WORLDGEN");

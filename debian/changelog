@@ -1,3 +1,10 @@
+ishtaria-admin (0.1.7) unstable; urgency=medium
+
+  * Generate and validate 16-bit height strips; pass the seed to
+    worldgen for datadisk planets (ADR 0020).
+
+ -- Vítězslav Dvořák <cybervitexus@gmail.com>  Tue, 27 Oct 2026 10:29:27 +0100
+
 ishtaria-admin (0.1.6) unstable; urgency=medium
 
   * First-time setup wizard (F7): stop the systemd unit, wipe the database,

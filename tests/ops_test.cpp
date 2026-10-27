@@ -163,7 +163,7 @@ int main() {
     ops.generateMap("generated", 99, 16);
     CHECK(ops.listMaps().size() == 2);
     CHECK(db.exec("SELECT seed || face_size::text FROM world_maps WHERE name = 'generated'")[0][0] == "9916");
-    CHECK(db.exec("SELECT octet_length(pixels) FROM world_maps WHERE name = 'generated'")[0][0] == std::to_string(96 * 16));
+    CHECK(db.exec("SELECT octet_length(pixels) FROM world_maps WHERE name = 'generated'")[0][0] == std::to_string(96 * 16 * 2));
     CHECK(throwsOp([&] { ops.generateMap("tiny", 1, 4); }));
 
     // story datadisks: offered when installed, checked, stored with the map and applied on load
