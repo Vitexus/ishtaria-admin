@@ -1,5 +1,9 @@
 # ishtaria-admin
 
+<!-- source-notice -->
+> **Primary source:** <https://git.vitexsoftware.com/Ishtaria/ishtaria-admin> (development happens there). **GitHub** (<https://github.com/Vitexus/ishtaria-admin>) is a secondary mirror; packages and binaries are **not built from GitHub**.
+<!-- /source-notice -->
+
 Text-mode (Turbo Vision) administration tool for an Ishtaria world server.
 It works directly on the server's PostgreSQL database, so it needs no admin
 HTTP API. Run it on the server host as the service user:
