@@ -10,4 +10,15 @@ createdb -h "$HOST" "$DB" || exit 77
 trap 'dropdb -h "$HOST" --if-exists "$DB"' EXIT
 URL="postgresql:///$DB?host=$HOST"
 DATABASE_URL="$URL" "$SERVER" "$CONFIG" --import "$PGM" --seed 42 --import-only
-ISHTARIA_SERVER="$SERVER" ISHTARIA_SERVER_CONFIG="$CONFIG" ISHTARIA_DATADISK_DIR="$(dirname "$0")/datadisks" ISHTARIA_WORLDGEN="${ISHTARIA_WORLDGEN:-ishtaria-worldgen}" DATABASE_URL="$URL" "$TEST"
+# Like the server binary above, prefer the freshly built worldgen of the sibling checkout
+# (the 16-bit PGM strip the admin validates); fall back to the installed one by hand.
+WORLDGEN="${ISHTARIA_WORLDGEN:-}"
+if [ -z "$WORLDGEN" ]; then
+    SIBLING="$(dirname "$0")/../../ishtaria-worldgen/target/debug/ishtaria-worldgen"
+    if [ -x "$SIBLING" ]; then
+        WORLDGEN="$SIBLING"
+    else
+        WORLDGEN="ishtaria-worldgen"
+    fi
+fi
+ISHTARIA_SERVER="$SERVER" ISHTARIA_SERVER_CONFIG="$CONFIG" ISHTARIA_DATADISK_DIR="$(dirname "$0")/datadisks" ISHTARIA_WORLDGEN="$WORLDGEN" DATABASE_URL="$URL" "$TEST"
